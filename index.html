@@ -221,6 +221,18 @@
   }
   .tracking-input::placeholder, .recipient-input::placeholder{color:#9C9482;}
 
+  .yamato-note{
+    font-size:11px;
+    color:#6B6450;
+    margin-top:6px;
+  }
+  .yamato-check-btn{
+    color:#2B4C7E !important;
+    font-weight:700;
+  }
+  .yamato-check-btn:disabled{
+    opacity:.6;
+  }
   .card-actions{
     display:flex;
     flex-wrap:wrap;
@@ -373,6 +385,15 @@
     border:none;
     box-shadow:0 6px 16px rgba(0,0,0,.4);
     cursor:pointer;
+  }
+  .fab-manual{
+    bottom:92px;
+    width:46px;
+    height:46px;
+    font-size:19px;
+    background:var(--surface);
+    color:var(--text-light);
+    border:1px solid var(--line);
   }
 
   .toast-error{
@@ -746,7 +767,9 @@ function renderCard(s){
       <input class="recipient-input" value="${escapeHtml(s.recipient)}" placeholder="お届け先（任意）"
         onchange="updateField('${s.id}','recipient', this.value)">
       ${renderRoute(s)}
+      ${s.yamatoCheckedAt ? `<div class="yamato-note">ヤマト最新:「${escapeHtml(s.yamatoStatusText||'')}」（${formatCheckedTime(s.yamatoCheckedAt)}取得）</div>` : ''}
       <div class="card-actions">
+        ${digits ? `<button class="link-btn yamato-check-btn" onclick="checkYamatoStatus('${s.id}')">📡 ヤマトで確認</button>`:''}
         ${s.status!=='shipped' ? `<button class="link-btn" onclick="revertStatus('${s.id}')">← 一つ戻す</button>`:''}
         ${trackUrl ? `<a class="link-btn" href="${trackUrl}" target="_blank" rel="noopener">追跡ページを開く</a>`:''}
         <button class="link-btn danger" onclick="deleteShipment('${s.id}')">削除</button>
@@ -803,6 +826,7 @@ function render(){
     <main class="list">
       ${groups.length===0 ? emptyState() : groups.map(([key,items])=>renderGroup(key,items)).join('')}
     </main>
+    <button class="fab fab-manual" onclick="openManualModal()" aria-label="手入力で追加">✎</button>
     <button class="fab" onclick="document.getElementById('cameraInput').click()" aria-label="伝票を撮影して追加">＋</button>
     ${storageError ? `<div class="toast-error">保存に失敗しました。もう一度お試しください。</div>`:''}
   `;
@@ -916,15 +940,26 @@ async function handleFile(e){
 
 function openModal(){
   document.getElementById('modal-root').classList.add('open');
+  document.getElementById('modal-preview').style.display='block';
   document.getElementById('modal-preview').src='';
   document.getElementById('modal-tracking').value='';
   document.getElementById('modal-recipient').value='';
   setModalStatus('画像を読み込み中…');
 }
+function openManualModal(){
+  document.getElementById('modal-root').classList.add('open');
+  document.getElementById('modal-preview').style.display='none';
+  document.getElementById('modal-preview').src='';
+  document.getElementById('modal-tracking').value='';
+  document.getElementById('modal-recipient').value='';
+  setModalStatus('');
+  setTimeout(()=>document.getElementById('modal-tracking').focus(), 50);
+}
 function closeModal(){
   document.getElementById('modal-root').classList.remove('open');
 }
 function setModalPreview(base64){
+  document.getElementById('modal-preview').style.display='block';
   document.getElementById('modal-preview').src = 'data:image/jpeg;base64,'+base64;
 }
 function setModalStatus(text){
@@ -954,6 +989,85 @@ async function saveSettingsApiKey(){
   await setApiKey(key);
   closeSettings();
 }
+
+const YAMATO_KEYWORDS = [
+  {kw:'配達完了', state:'delivered'},
+  {kw:'お届け済み', state:'delivered'},
+  {kw:'持戻', state:'transit'},
+  {kw:'ご不在', state:'transit'},
+  {kw:'不在', state:'transit'},
+  {kw:'配達中', state:'transit'},
+  {kw:'中継', state:'transit'},
+  {kw:'転送', state:'transit'},
+  {kw:'保管', state:'transit'},
+  {kw:'通関', state:'transit'},
+  {kw:'集荷', state:'shipped'},
+  {kw:'発送', state:'shipped'},
+  {kw:'受付', state:'shipped'},
+];
+const YAMATO_PROXY = 'https://api.allorigins.win/raw?url=';
+
+function formatCheckedTime(iso){
+  const d = new Date(iso);
+  const today = new Date(); today.setHours(0,0,0,0);
+  const dd = new Date(d); dd.setHours(0,0,0,0);
+  const hm = d.getHours().toString().padStart(2,'0')+':'+d.getMinutes().toString().padStart(2,'0');
+  if(dd.getTime()===today.getTime()) return hm;
+  return `${d.getMonth()+1}/${d.getDate()} ${hm}`;
+}
+
+async function fetchAndDecode(url){
+  const res = await fetch(url);
+  if(!res.ok) throw new Error('fetch failed '+res.status);
+  const buf = await res.arrayBuffer();
+  const charsets = ['utf-8','shift_jis','euc-jp'];
+  let fallback = '';
+  for(const cs of charsets){
+    try{
+      const decoded = new TextDecoder(cs).decode(buf);
+      const text = decoded.replace(/<[^>]+>/g,' ').replace(/\s+/g,' ');
+      if(!fallback) fallback = text;
+      if(YAMATO_KEYWORDS.some(k=>text.includes(k.kw))) return text;
+    }catch(e){ /* unsupported charset label, skip */ }
+  }
+  return fallback;
+}
+
+async function checkYamatoStatus(id){
+  const s = shipments.find(x=>x.id===id);
+  if(!s) return;
+  const digits = (s.trackingNumber||'').replace(/[^0-9]/g,'');
+  if(!digits) return;
+
+  const card = document.querySelector(`.card[data-id="${id}"]`);
+  const btn = card ? card.querySelector('.yamato-check-btn') : null;
+  if(btn){ btn.textContent = '確認中…'; btn.disabled = true; }
+
+  try{
+    const targetUrl = `https://toi.kuronekoyamato.co.jp/cgi-bin/tneko?number00=${digits}`;
+    const text = await fetchAndDecode(YAMATO_PROXY + encodeURIComponent(targetUrl));
+
+    let lastMatch = null, lastIndex = -1;
+    for(const k of YAMATO_KEYWORDS){
+      const idx = text.lastIndexOf(k.kw);
+      if(idx > lastIndex){ lastIndex = idx; lastMatch = k; }
+    }
+    if(!lastMatch) throw new Error('status not found on page');
+
+    s.status = lastMatch.state;
+    s.yamatoStatusText = lastMatch.kw;
+    s.yamatoCheckedAt = new Date().toISOString();
+    saveShipments();
+    render();
+  }catch(err){
+    if(btn){
+      btn.textContent = '取得できませんでした';
+      btn.disabled = false;
+      setTimeout(()=>{ if(btn) btn.textContent = '📡 ヤマトで確認'; }, 3000);
+    }
+  }
+}
+
 
 function tickProgress(){
   document.querySelectorAll('.card').forEach(card=>{
