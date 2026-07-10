@@ -545,44 +545,6 @@ function escapeHtml(str){
   return String(str||'').replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
 
-function addSampleData(){
-  const now = Date.now();
-  const iso = ms => new Date(ms).toISOString();
-  const dateOnly = ms => new Date(ms).toISOString().slice(0,10);
-
-  const samples = [
-    { trackingNumber:'412345678901', recipient:'さくら歯科クリニック',
-      dateAdded: iso(now - 1000*60*30), status:'shipped',
-      expectedSlot:'s16' },
-    { trackingNumber:'412345678902', recipient:'みなと歯科医院',
-      dateAdded: iso(now - 1000*60*60*20), status:'transit',
-      expectedDate: dateOnly(now + 1000*60*60*3), expectedSlot:'s14' },
-    { trackingNumber:'412345678903', recipient:'あおば矯正歯科',
-      dateAdded: iso(now - 1000*60*60*30), status:'transit',
-      expectedDate: dateOnly(now - 1000*60*60*6), expectedSlot:'am' },
-    { trackingNumber:'412345678904', recipient:'ひかりデンタル提携医院',
-      dateAdded: iso(now - 1000*60*60*48), status:'delivered',
-      expectedDate: dateOnly(now - 1000*60*60*24), expectedSlot:'s18' },
-    { trackingNumber:'412345678905', recipient:'つばさ歯科',
-      dateAdded: iso(now - 1000*60*60*2), status:'transit',
-      expectedDate: dateOnly(now), expectedSlot:'s19' },
-  ];
-
-  samples.forEach(sample=>{
-    shipments.unshift({
-      id: (crypto.randomUUID ? crypto.randomUUID() : String(Date.now())+Math.random()),
-      trackingNumber: sample.trackingNumber,
-      recipient: sample.recipient,
-      dateAdded: sample.dateAdded,
-      status: sample.status,
-      expectedDate: sample.expectedDate,
-      expectedSlot: sample.expectedSlot
-    });
-  });
-  saveShipments();
-  render();
-}
-
 function addShipment(data){
   shipments.unshift({
     id: (crypto.randomUUID ? crypto.randomUUID() : String(Date.now())+Math.random()),
@@ -664,7 +626,6 @@ function emptyState(){
   return `<div class="empty">
     <p>まだ荷物が登録されていません。</p>
     <p class="empty-sub">右下の「＋」から伝票を撮影すると、追跡番号を自動で読み取って登録します。</p>
-    <button class="link-btn anime" onclick="addSampleData()">サンプルデータを試す →</button>
   </div>`;
 }
 
@@ -778,9 +739,7 @@ function render(){
   app.innerHTML = `
     <header class="topbar">
       <h1 class="anime">配送トラッカー</h1>
-      <p class="subtitle">発送した荷物の現在地をひと目で
-        <button class="link-btn" onclick="addSampleData()" style="margin-left:8px;">＋サンプル追加</button>
-      </p>
+      <p class="subtitle">発送した荷物の現在地をひと目で</p>
     </header>
     ${renderSummary()}
     <div class="chips anime">
